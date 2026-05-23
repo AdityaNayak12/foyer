@@ -1,0 +1,246 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  BUYER
+  ORGANIZER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING_CHECKOUT
+  PAID
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  INITIATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum TicketStatus {
+  ACTIVE
+  RESERVED_FOR_RESALE
+  RESOLD
+  VOIDED
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  CANCELLED
+}
+
+enum PayoutStatus {
+  HELD
+  RELEASED
+  DISPUTED
+  CANCELLED
+}
+
+model User {
+  id            String       @id // Matches Clerk User ID
+  email         String       @unique
+  firstName     String?
+  lastName      String?
+  role          UserRole     @default(BUYER)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  
+  // Relations
+  organizer     Organizer?
+  orders        Order[]      @relation("BuyerOrders")
+  tickets       Ticket[]     @relation("TicketOwner")
+  listings      Listing[]    @relation("SellerListings")
+  payouts       Payout[]     @relation("SellerPayouts")
+  auditLogs     AuditLog[]
+
+  @@index([email])
+}
+
+model Organizer {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName   String
+  payoutDetails String?   // JSON string containing bank account info
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  events        Event[]
+}
+
+model Event {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizerId   String       @db.Uuid
+  organizer     Organizer    @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  title         String
+  description   String?
+  slug          String       @unique // for beautiful dynamic Next.js routing
+  location      String
+  imageUrl      String?
+  startDate     DateTime
+  endDate       DateTime
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  ticketTypes   TicketType[]
+  tickets       Ticket[]
+
+  @@index([startDate])
+  @@index([slug])
+}
+
+model TicketType {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId     String   @db.Uuid
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name        String   // "General Admission", "VIP"
+  price       Decimal  @db.Decimal(10, 2)
+  capacity    Int
+  soldCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tickets     Ticket[]
+  orderItems  OrderItem[]
+
+  @@index([eventId])
+}
+
+model Ticket {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId       String        @db.Uuid
+  event         Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketTypeId  String        @db.Uuid
+  ticketType    TicketType    @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  ownerId       String
+  owner         User          @relation("TicketOwner", fields: [ownerId], references: [id])
+  purchasePrice Decimal       @db.Decimal(10, 2)
+  status        TicketStatus  @default(ACTIVE)
+  qrToken       String        @unique // unique secure dynamic check-in nonce token
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  listings      Listing[]
+  orderItems    OrderItem[]
+
+  @@index([ownerId])
+  @@index([qrToken])
+  @@index([ticketTypeId])
+}
+
+model Listing {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId      String        @db.Uuid
+  ticket        Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sellerId      String
+  seller        User          @relation("SellerListings", fields: [sellerId], references: [id])
+  price         Decimal       @db.Decimal(10, 2) // must satisfy price cap checks (<= 1.1x purchasePrice)
+  status        ListingStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  orderItems    OrderItem[]
+
+  @@index([ticketId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+model Order {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId        String
+  buyer          User        @relation("BuyerOrders", fields: [buyerId], references: [id])
+  totalAmount    Decimal     @db.Decimal(10, 2)
+  status         OrderStatus @default(PENDING_CHECKOUT)
+  expiresAt      DateTime    // Timeout window for PENDING_CHECKOUT (typically 10 minutes)
+  idempotencyKey String      @unique // UUID generated by the client to prevent double order allocations
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  // Relations
+  items          OrderItem[]
+  payments       Payment[]
+
+  @@index([buyerId])
+  @@index([status, expiresAt])
+}
+
+model OrderItem {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId       String      @db.Uuid
+  order         Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ticketTypeId  String?     @db.Uuid // Nullable if secondary resale
+  ticketType    TicketType? @relation(fields: [ticketTypeId], references: [id])
+  ticketId      String?     @db.Uuid // Nullable if buying a new ticket via TicketType
+  ticket        Ticket?     @relation(fields: [ticketId], references: [id])
+  listingId     String?     @db.Uuid // Defined if purchased from secondary market
+  listing       Listing?    @relation(fields: [listingId], references: [id])
+  payout        Payout?
+  price         Decimal     @db.Decimal(10, 2)
+  createdAt     DateTime    @default(now())
+}
+
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId           String        @db.Uuid
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount            Decimal       @db.Decimal(10, 2)
+  status            PaymentStatus @default(INITIATED)
+  gateway           String        @default("RAZORPAY")
+  gatewayOrderId    String        @unique // Razorpay Order ID
+  gatewayPaymentId  String?       @unique // Razorpay Payment ID
+  gatewaySignature  String?
+  refundedAmount    Decimal       @default(0) @db.Decimal(10, 2)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([gatewayOrderId])
+}
+
+model Payout {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sellerId        String
+  seller          User         @relation("SellerPayouts", fields: [sellerId], references: [id])
+  orderItemId     String       @unique @db.Uuid // Matches the secondary purchase order item
+  orderItem       OrderItem    @relation(fields: [orderItemId], references: [id])
+  amount          Decimal      @db.Decimal(10, 2) // Resale price minus platform fee
+  status          PayoutStatus @default(HELD)
+  releaseDate     DateTime     // Expected payout date (e.g. event.endDate + 24 hours)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([releaseDate])
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  details   Json
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
