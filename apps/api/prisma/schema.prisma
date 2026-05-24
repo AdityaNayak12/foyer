@@ -64,7 +64,7 @@ model User {
   orders        Order[]      @relation("BuyerOrders")
   tickets       Ticket[]     @relation("TicketOwner")
   listings      Listing[]    @relation("SellerListings")
-  payouts       Payout[]     @relation("SellerPayouts")
+  sellerPayouts SellerPayout[] @relation("SellerPayouts")
   auditLogs     AuditLog[]
 
   @@index([email])
@@ -134,6 +134,7 @@ model Ticket {
   purchasePrice Decimal       @db.Decimal(10, 2)
   status        TicketStatus  @default(ACTIVE)
   qrToken       String        @unique // unique secure dynamic check-in nonce token
+  qrNonce       String        @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -194,7 +195,7 @@ model OrderItem {
   ticket        Ticket?     @relation(fields: [ticketId], references: [id])
   listingId     String?     @db.Uuid // Defined if purchased from secondary market
   listing       Listing?    @relation(fields: [listingId], references: [id])
-  payout        Payout?
+  sellerPayout  SellerPayout?
   price         Decimal     @db.Decimal(10, 2)
   createdAt     DateTime    @default(now())
 }
@@ -217,7 +218,7 @@ model Payment {
   @@index([gatewayOrderId])
 }
 
-model Payout {
+model SellerPayout {
   id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   sellerId        String
   seller          User         @relation("SellerPayouts", fields: [sellerId], references: [id])
