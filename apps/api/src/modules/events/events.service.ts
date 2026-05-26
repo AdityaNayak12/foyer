@@ -2,6 +2,7 @@ import {
   Injectable,
   ForbiddenException,
   NotFoundException,
+  BadRequestException,
   Logger,
   ConflictException,
 } from '@nestjs/common';
@@ -15,6 +16,18 @@ export class EventsService {
   constructor(private prisma: PrismaService) {}
 
   async createEvent(userId: string, dto: CreateEventDto) {
+    const start = new Date(dto.startDate);
+    const end = new Date(dto.endDate);
+    const now = new Date();
+
+    if (start >= end) {
+      throw new BadRequestException('Event start date must be prior to end date');
+    }
+
+    if (start <= now) {
+      throw new BadRequestException('Event start date must be in the future');
+    }
+
     // 1. Verify user is registered as an organizer
     const organizer = await this.prisma.organizer.findUnique({
       where: { userId },
