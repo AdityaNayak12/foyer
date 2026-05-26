@@ -12,6 +12,7 @@
     "test": "turbo run test"
   },
   "devDependencies": {
+    "@nestjs/platform-express": "^11.1.24",
     "turbo": "^1.10.0"
   }
 }
