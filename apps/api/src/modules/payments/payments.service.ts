@@ -108,6 +108,51 @@ export class PaymentsService {
 
     // 3. Complete Checkout transactionally (lock Order row, update statuses, mint tickets)
     return this.prisma.$transaction(async (tx) => {
+      // Perform a locked SELECT ... FOR UPDATE inside the transaction block
+      const lockedOrders = await tx.$queryRaw<any[]>`
+        SELECT id, status FROM "Order" WHERE id = ${order.id}::uuid FOR UPDATE
+      `;
+
+      const lockedOrder = lockedOrders?.[0];
+      if (!lockedOrder) {
+        throw new NotFoundException(
+          `Order "${order.id}" not found during transaction lock.`,
+        );
+      }
+
+      // Idempotency check inside transaction
+      if (lockedOrder.status === OrderStatus.PAID) {
+        this.logger.log(
+          `Order ${order.id} was already marked as PAID inside transaction lock. Returning early.`,
+        );
+        // Find existing tickets using transactional client 'tx'
+        const tickets = await tx.ticket.findMany({
+          where: {
+            ownerId: buyerId,
+            orderItems: {
+              some: {
+                orderId: order.id,
+              },
+            },
+          },
+        });
+        return {
+          success: true,
+          message: 'Payment has already been successfully verified.',
+          order: {
+            ...order,
+            status: OrderStatus.PAID,
+          },
+          tickets,
+        };
+      }
+
+      if (lockedOrder.status !== OrderStatus.PENDING_CHECKOUT) {
+        throw new BadRequestException(
+          `Order is in state "${lockedOrder.status}" and cannot be paid.`,
+        );
+      }
+
       // Transition order status to PAID
       const updatedOrder = await tx.order.update({
         where: { id: order.id },

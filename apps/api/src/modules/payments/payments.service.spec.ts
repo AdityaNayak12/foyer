@@ -25,6 +25,7 @@ describe('PaymentsService', () => {
     orderItem: {
       update: jest.fn(),
     },
+    $queryRaw: jest.fn(),
     $transaction: jest.fn((cb) => cb(mockPrisma)),
   };
 
@@ -143,6 +144,9 @@ describe('PaymentsService', () => {
       };
 
       mockPrisma.payment.findUnique.mockResolvedValue(mockPayment);
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { id: 'order-1', status: OrderStatus.PENDING_CHECKOUT },
+      ]);
       mockPrisma.order.update.mockResolvedValue({
         id: 'order-1',
         status: OrderStatus.PAID,
@@ -168,6 +172,41 @@ describe('PaymentsService', () => {
         where: { id: 'item-1' },
         data: { ticketId: 't-123' },
       });
+    });
+
+    it('should return successfully early if order status is updated to PAID inside transaction block (concurrent idempotency)', async () => {
+      const mockPayment = {
+        id: 'pay-1',
+        orderId: 'order-1',
+        status: PaymentStatus.INITIATED,
+        order: {
+          id: 'order-1',
+          buyerId: 'user-1',
+          status: OrderStatus.PENDING_CHECKOUT,
+          items: [],
+        },
+      };
+
+      const mockTickets = [
+        { id: 't-123', ownerId: 'user-1', qrToken: 'secure-token-123' },
+      ];
+
+      mockPrisma.payment.findUnique.mockResolvedValue(mockPayment);
+      mockPrisma.$queryRaw.mockResolvedValue([
+        { id: 'order-1', status: OrderStatus.PAID },
+      ]);
+      mockPrisma.ticket.findMany.mockResolvedValue(mockTickets);
+
+      const result = await service.verifyPayment('user-1', {
+        razorpayOrderId: 'rzp_mock_123',
+        razorpayPaymentId: 'pay_mock_xyz',
+        razorpaySignature: 'sig_mock_abc',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('already been successfully verified');
+      expect(result.tickets).toEqual(mockTickets);
+      expect(mockPrisma.order.update).not.toHaveBeenCalled();
     });
   });
 });
