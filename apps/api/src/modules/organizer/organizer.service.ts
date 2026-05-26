@@ -1,4 +1,8 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrganizerDto } from './dto/create-organizer.dto';
 import { UserRole } from '@prisma/client';
@@ -39,10 +43,14 @@ export class OrganizerService {
         },
       });
 
-      await tx.user.update({
-        where: { id: userId },
-        data: { role: UserRole.ORGANIZER },
-      });
+      // Only transition role if user currently has BUYER status (preserves ADMIN)
+      const currentUser = await tx.user.findUnique({ where: { id: userId } });
+      if (currentUser && currentUser.role === UserRole.BUYER) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { role: UserRole.ORGANIZER },
+        });
+      }
 
       return organizer;
     });
