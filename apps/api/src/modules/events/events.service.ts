@@ -4,7 +4,6 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
-  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
