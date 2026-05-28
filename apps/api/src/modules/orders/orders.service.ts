@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus, TicketType } from '@prisma/client';
 import Razorpay from 'razorpay';
 
 @Injectable()
@@ -82,7 +82,7 @@ export class OrdersService {
     return this.prisma.$transaction(
       async (tx) => {
         let totalAmount = 0;
-        const ticketTypesSnapshot: any[] = [];
+        const ticketTypesSnapshot: TicketType[] = [];
 
         // Validate ticket types and check/reserve capacity atomically
         for (const item of dto.items) {
@@ -211,9 +211,7 @@ export class OrdersService {
     }
 
     if (order.buyerId !== buyerId) {
-      throw new ForbiddenException(
-        'You are not authorized to view this order',
-      );
+      throw new ForbiddenException('You are not authorized to view this order');
     }
 
     return order;
@@ -260,15 +258,21 @@ export class OrdersService {
             data: { status: PaymentStatus.FAILED },
           });
 
-          // Reclaim capacity for each item
+          // Reclaim capacity by grouping ticket types and executing bulk updates
+          const reclamationMap: Record<string, number> = {};
           for (const item of order.items) {
             if (item.ticketTypeId) {
-              await tx.$executeRaw`
-                UPDATE "TicketType"
-                SET "soldCount" = GREATEST(0, "soldCount" - 1)
-                WHERE id = ${item.ticketTypeId}::uuid
-              `;
+              reclamationMap[item.ticketTypeId] =
+                (reclamationMap[item.ticketTypeId] || 0) + 1;
             }
+          }
+
+          for (const [ttId, qty] of Object.entries(reclamationMap)) {
+            await tx.$executeRaw`
+              UPDATE "TicketType"
+              SET "soldCount" = GREATEST(0, "soldCount" - ${qty})
+              WHERE id = ${ttId}::uuid
+            `;
           }
         });
         this.logger.log(
