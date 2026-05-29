@@ -3,14 +3,12 @@ import { PaymentsService } from './payments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
-import { OrderStatus, PaymentStatus, TicketStatus } from '@prisma/client';
-import * as crypto from 'crypto';
+import { OrderStatus, PaymentStatus } from '@prisma/client';
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
-  let prisma: PrismaService;
 
-  const mockPrisma = {
+  const mockPrisma: any = {
     payment: {
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -46,7 +44,6 @@ describe('PaymentsService', () => {
     }).compile();
 
     service = module.get<PaymentsService>(PaymentsService);
-    prisma = module.get<PrismaService>(PrismaService);
 
     jest.clearAllMocks();
   });
