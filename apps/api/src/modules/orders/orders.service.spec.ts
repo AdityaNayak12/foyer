@@ -7,7 +7,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
 
 jest.mock('razorpay', () => {
   return jest.fn().mockImplementation(() => {
@@ -130,7 +130,7 @@ describe('OrdersService', () => {
       mockPrisma.ticketType.findUnique.mockResolvedValue({
         id: 'tt-456',
         name: 'VIP',
-        price: 500,
+        price: new Prisma.Decimal(500),
         capacity: 10,
         soldCount: 9,
       });
@@ -151,7 +151,7 @@ describe('OrdersService', () => {
       mockPrisma.ticketType.findUnique.mockResolvedValue({
         id: 'tt-456',
         name: 'VIP',
-        price: 500,
+        price: new Prisma.Decimal(500),
         capacity: 10,
         soldCount: 5,
       });
