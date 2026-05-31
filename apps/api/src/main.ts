@@ -10,9 +10,23 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
 
+  const frontendUrl = configService.get<string>('FRONTEND_URL');
+  const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
+
+  if (!frontendUrl && nodeEnv === 'production') {
+    throw new Error(
+      'FRONTEND_URL environment variable is mandatory in production mode to configure secure CORS.',
+    );
+  }
+
+  // Parse comma-separated origins if provided, otherwise default to wildcard for local development only
+  const allowedOrigins = frontendUrl
+    ? frontendUrl.split(',').map((url) => url.trim())
+    : '*';
+
   // Enable CORS for frontend API calls
   app.enableCors({
-    origin: configService.get<string>('FRONTEND_URL') || '*',
+    origin: allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
