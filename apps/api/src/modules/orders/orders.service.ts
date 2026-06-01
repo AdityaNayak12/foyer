@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { OrderStatus, PaymentStatus, TicketType } from '@prisma/client';
+import { OrderStatus, PaymentStatus, TicketType, Prisma, UserRole } from '@prisma/client';
 import Razorpay from 'razorpay';
 
 @Injectable()
@@ -24,13 +24,27 @@ export class OrdersService {
   ) {
     const keyId = this.configService.get<string>('RAZORPAY_KEY_ID');
     const keySecret = this.configService.get<string>('RAZORPAY_KEY_SECRET');
+    const enableMock = this.configService.get<boolean>('ENABLE_MOCK_PAYMENTS') ?? false;
+    const isProd = this.configService.get<string>('NODE_ENV') === 'production';
 
-    if (keyId && keySecret && !keyId.startsWith('rzp_test_...')) {
+    if (enableMock) {
+      if (isProd) {
+        throw new Error(
+          'Security Violation: Mock payments cannot be enabled in production environments!',
+        );
+      }
+      this.logger.warn('Operating in MOCK payment gateway mode as requested by configuration.');
+    } else if (keyId && keySecret && keyId !== 'rzp_test_...') {
       this.razorpay = new Razorpay({
         key_id: keyId,
         key_secret: keySecret,
       });
     } else {
+      if (isProd) {
+        throw new Error(
+          'Razorpay credentials are not fully configured in production mode.',
+        );
+      }
       this.logger.warn(
         'Razorpay credentials not fully configured or sandbox keys are placeholders. Operating in MOCK payment gateway mode.',
       );
@@ -69,11 +83,12 @@ export class OrdersService {
     });
     if (!userExists) {
       // Create user record using lazy registration
+      const fallbackDomain = this.configService.get<string>('FALLBACK_USER_DOMAIN') ?? 'clerk.foyer.dev';
       await this.prisma.user.create({
         data: {
           id: buyerId,
-          email: `${buyerId}@clerk.foyer.dev`, // fallback, usually matches
-          role: 'BUYER',
+          email: `${buyerId}@${fallbackDomain}`, // fallback, usually matches
+          role: UserRole.BUYER,
         },
       });
     }
@@ -81,7 +96,7 @@ export class OrdersService {
     // 2. Perform Transactional Stock Reservation and Order Creation
     return this.prisma.$transaction(
       async (tx) => {
-        let totalAmount = 0;
+        let totalAmount = new Prisma.Decimal(0);
         const ticketTypesSnapshot: TicketType[] = [];
 
         // Validate ticket types and check/reserve capacity atomically
@@ -97,7 +112,7 @@ export class OrdersService {
           }
 
           ticketTypesSnapshot.push(ticketType);
-          totalAmount += Number(ticketType.price) * item.quantity;
+          totalAmount = totalAmount.add(ticketType.price.mul(item.quantity));
 
           // Perform atomic capacity increment and bounds check
           const affectedRows = await tx.$executeRaw`
@@ -115,7 +130,8 @@ export class OrdersService {
 
         // Create the Order in PENDING_CHECKOUT state
         const orderExpiry = new Date();
-        orderExpiry.setMinutes(orderExpiry.getMinutes() + 10); // 10 minutes expiry window
+        const expiryMinutes = this.configService.get<number>('ORDER_EXPIRY_MINUTES') ?? 10;
+        orderExpiry.setMinutes(orderExpiry.getMinutes() + expiryMinutes); // Configurable expiry window
 
         // Flatten items to create one OrderItem row per ticket quantity
         const orderItemsCreate: any[] = [];
@@ -150,7 +166,7 @@ export class OrdersService {
         if (this.razorpay) {
           try {
             const rzpOrder = await this.razorpay.orders.create({
-              amount: Math.round(totalAmount * 100), // convert to paise
+              amount: Math.round(totalAmount.toNumber() * 100), // convert to paise
               currency: 'INR',
               receipt: order.id,
             });
@@ -175,7 +191,7 @@ export class OrdersService {
         });
 
         this.logger.log(
-          `Order created successfully: id=${order.id}, totalAmount=${totalAmount}, gatewayOrderId=${gatewayOrderId}`,
+          `Order created successfully: id=${order.id}, totalAmount=${totalAmount.toString()}, gatewayOrderId=${gatewayOrderId}`,
         );
 
         return {

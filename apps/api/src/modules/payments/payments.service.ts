@@ -77,8 +77,25 @@ export class PaymentsService {
     }
 
     // 2. Signature Check (HMAC-SHA256)
+    const isProd = this.configService.get<string>('NODE_ENV') === 'production';
+    const enableMock = this.configService.get<boolean>('ENABLE_MOCK_PAYMENTS') ?? true;
+
     const isMockOrder = dto.razorpayOrderId.startsWith('rzp_mock_');
-    if (!isMockOrder) {
+    if (isMockOrder) {
+      if (isProd) {
+        throw new BadRequestException(
+          'Security Violation: Mock payments are strictly disabled in production environments!',
+        );
+      }
+      if (!enableMock) {
+        throw new BadRequestException(
+          'Mock payments are currently disabled on this server.',
+        );
+      }
+      this.logger.log(
+        `Mock payment signature verification triggered for order: ${dto.razorpayOrderId}`,
+      );
+    } else {
       const keySecret = this.configService.get<string>('RAZORPAY_KEY_SECRET');
       if (!keySecret) {
         throw new BadRequestException(
@@ -100,10 +117,6 @@ export class PaymentsService {
           'Invalid payment signature verification failed',
         );
       }
-    } else {
-      this.logger.log(
-        `Mock payment signature verification triggered for order: ${dto.razorpayOrderId}`,
-      );
     }
 
     // 3. Complete Checkout transactionally (lock Order row, update statuses, mint tickets)

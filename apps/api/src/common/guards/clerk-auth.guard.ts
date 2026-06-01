@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
+import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class ClerkAuthGuard implements CanActivate {
@@ -43,7 +44,7 @@ export class ClerkAuthGuard implements CanActivate {
       request.user = {
         id: decodedToken.sub,
         email: decodedToken.email || decodedToken.emails?.[0],
-        role: decodedToken.metadata?.role || 'BUYER',
+        role: decodedToken.metadata?.role || UserRole.BUYER,
       };
       return true;
     } catch (err) {
