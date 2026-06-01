@@ -159,6 +159,21 @@ export class PaymentsService {
         data: { status: OrderStatus.PAID },
       });
 
+      // Proactive payment replay protection
+      if (dto.razorpayPaymentId && !isMockOrder) {
+        const duplicatePayment = await tx.payment.findFirst({
+          where: {
+            gatewayPaymentId: dto.razorpayPaymentId,
+            status: PaymentStatus.CAPTURED,
+          },
+        });
+        if (duplicatePayment) {
+          throw new BadRequestException(
+            'This payment transaction has already been captured and associated with another ticket purchase.',
+          );
+        }
+      }
+
       // Update payment status to CAPTURED
       await tx.payment.update({
         where: { id: payment.id },
