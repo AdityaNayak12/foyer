@@ -27,6 +27,15 @@ export class EventsService {
       throw new BadRequestException('Event start date must be in the future');
     }
 
+    // Validate uniqueness of ticket type names
+    const ttNames = dto.ticketTypes.map((tt) => tt.name.trim().toLowerCase());
+    const hasDuplicates = new Set(ttNames).size !== ttNames.length;
+    if (hasDuplicates) {
+      throw new BadRequestException(
+        'Ticket type names must be unique within a single event.',
+      );
+    }
+
     // 1. Verify user is registered as an organizer
     const organizer = await this.prisma.organizer.findUnique({
       where: { userId },
